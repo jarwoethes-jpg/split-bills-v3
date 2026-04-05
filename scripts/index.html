@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head></head>
+<body>
+  <script>
+    window.ai_edge_gallery_get_result = async (data) => {
+      try {
+        const jsonData = typeof data === 'string' ? JSON.parse(data) : data;
+        const total = Number(jsonData.total);
+        const people = Number(jsonData.people);
+        const taxPercent = Number(jsonData.taxPercent || 0);
+        const tipPercent = Number(jsonData.tipPercent || 0);
+
+        if (!Number.isFinite(total) || total < 0) {
+          throw new Error('total must be a valid non-negative number');
+        }
+
+        if (!Number.isInteger(people) || people <= 0) {
+          throw new Error('people must be a positive integer');
+        }
+
+        const taxAmount = total * (taxPercent / 100);
+        const tipAmount = total * (tipPercent / 100);
+        const grandTotal = total + taxAmount + tipAmount;
+        const perPerson = grandTotal / people;
+
+        return JSON.stringify({
+          result: `Each person should pay ${formatMoney(perPerson)}. Total with tax and tip is ${formatMoney(grandTotal)}.`,
+          breakdown: {
+            subtotal: round2(total),
+            taxPercent: round2(taxPercent),
+            taxAmount: round2(taxAmount),
+            tipPercent: round2(tipPercent),
+            tipAmount: round2(tipAmount),
+            grandTotal: round2(grandTotal),
+            people,
+            perPerson: round2(perPerson)
+          }
+        });
+      } catch (e) {
+        console.error(e);
+        return JSON.stringify({ error: `Failed: ${e.message}` });
+      }
+    };
+
+    window.run_js = window.ai_edge_gallery_get_result;
+
+    function round2(value) {
+      return Math.round((value + Number.EPSILON) * 100) / 100;
+    }
+
+    function formatMoney(value) {
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD'
+      }).format(round2(value));
+    }
+  </script>
+</body>
+</html>
