@@ -1,219 +1,26 @@
 <!DOCTYPE html>
 <html lang="en">
-<head></head>
-<body>
-  <script>
-    window.ai_edge_gallery_get_result = async (data) => {
-      try {
-        const jsonData = typeof data === 'string' ? JSON.parse(data) : data;
-        const people = normalizePeople(jsonData.people);
-        const items = normalizeItems(jsonData.items, people);
-        const taxPercent = normalizePercent(jsonData.taxPercent || 0, 'taxPercent');
-        const tipPercent = normalizePercent(jsonData.tipPercent || 0, 'tipPercent');
-        const currency = normalizeCurrency(jsonData.currency || 'IDR');
-
-        if (!items.length) {
-          throw new Error('items must contain at least one item');
-        }
-
-        const subtotal = items.reduce((sum, item) => sum + item.amount, 0);
-        const taxAmount = subtotal * (taxPercent / 100);
-        const tipAmount = subtotal * (tipPercent / 100);
-        const extraTotal = taxAmount + tipAmount;
-
-        const personMap = new Map();
-        for (const person of people) {
-          personMap.set(person, {
-            name: person,
-            itemSubtotal: 0,
-            taxShare: 0,
-            tipShare: 0,
-            total: 0,
-            items: []
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Split Bills v3</title>
+  </head>
+  <body>
+    <script src="./split-bills.js"></script>
+    <script>
+      window.ai_edge_gallery_get_result = async (data) => {
+        try {
+          const output = window.SplitBillsV3.run(data);
+          return JSON.stringify(output);
+        } catch (e) {
+          console.error(e);
+          return JSON.stringify({
+            error: e && e.message ? e.message : 'Unknown error'
           });
         }
+      };
 
-        for (const item of items) {
-          const splitAmount = item.amount / item.assignedTo.length;
-          for (const person of item.assignedTo) {
-            const entry = personMap.get(person);
-            entry.itemSubtotal += splitAmount;
-            entry.items.push({
-              name: item.name,
-              share: round2(splitAmount),
-              sharedWith: item.assignedTo.length > 1 ? item.assignedTo : undefined
-            });
-          }
-        }
-
-        for (const entry of personMap.values()) {
-          const ratio = subtotal === 0 ? 0 : entry.itemSubtotal / subtotal;
-          entry.taxShare = taxAmount * ratio;
-          entry.tipShare = tipAmount * ratio;
-          entry.total = entry.itemSubtotal + entry.taxShare + entry.tipShare;
-        }
-
-        const perPerson = Array.from(personMap.values()).map((entry) => ({
-          name: entry.name,
-          itemSubtotal: round2(entry.itemSubtotal),
-          taxShare: round2(entry.taxShare),
-          tipShare: round2(entry.tipShare),
-          total: round2(entry.total),
-          items: entry.items
-        }));
-
-        return JSON.stringify({
-          result: buildSummary(perPerson, {
-            currency,
-            subtotal,
-            taxPercent,
-            taxAmount,
-            tipPercent,
-            tipAmount,
-            grandTotal: subtotal + extraTotal
-          }),
-          breakdown: {
-            currency,
-            subtotal: round2(subtotal),
-            taxPercent: round2(taxPercent),
-            taxAmount: round2(taxAmount),
-            tipPercent: round2(tipPercent),
-            tipAmount: round2(tipAmount),
-            grandTotal: round2(subtotal + extraTotal),
-            people,
-            items: items.map((item) => ({
-              name: item.name,
-              amount: round2(item.amount),
-              assignedTo: item.assignedTo
-            })),
-            perPerson
-          }
-        });
-      } catch (e) {
-        console.error(e);
-        return JSON.stringify({ error: `Failed: ${e.message}` });
-      }
-    };
-
-    window.run_js = window.ai_edge_gallery_get_result;
-
-    function normalizePeople(value) {
-      if (!Array.isArray(value) || !value.length) {
-        throw new Error('people must be a non-empty array of names');
-      }
-
-      const cleaned = value.map((name) => String(name || '').trim()).filter(Boolean);
-      const unique = [...new Set(cleaned)];
-
-      if (!unique.length) {
-        throw new Error('people must contain at least one valid name');
-      }
-
-      if (unique.length !== cleaned.length) {
-        throw new Error('people must not contain duplicates');
-      }
-
-      return unique;
-    }
-
-    function normalizeItems(value, people) {
-      if (!Array.isArray(value)) {
-        throw new Error('items must be an array');
-      }
-
-      const peopleSet = new Set(people);
-
-      return value.map((item, index) => {
-        if (!item || typeof item !== 'object') {
-          throw new Error(`items[${index}] must be an object`);
-        }
-
-        const name = String(item.name || '').trim() || `Item ${index + 1}`;
-        const amount = Number(item.amount);
-        if (!Number.isFinite(amount) || amount < 0) {
-          throw new Error(`items[${index}].amount must be a valid non-negative number`);
-        }
-
-        const assignedRaw = Array.isArray(item.assignedTo) && item.assignedTo.length ? item.assignedTo : people;
-        const assignedTo = [...new Set(assignedRaw.map((name) => String(name || '').trim()).filter(Boolean))];
-
-        if (!assignedTo.length) {
-          throw new Error(`items[${index}].assignedTo must contain at least one person`);
-        }
-
-        for (const person of assignedTo) {
-          if (!peopleSet.has(person)) {
-            throw new Error(`items[${index}].assignedTo contains unknown person: ${person}`);
-          }
-        }
-
-        return { name, amount, assignedTo };
-      });
-    }
-
-    function normalizePercent(value, fieldName) {
-      const number = Number(value || 0);
-      if (!Number.isFinite(number) || number < 0) {
-        throw new Error(`${fieldName} must be a valid non-negative number`);
-      }
-      return number;
-    }
-
-    function normalizeCurrency(value) {
-      const currency = String(value || 'IDR').trim().toUpperCase();
-      return currency || 'IDR';
-    }
-
-    function buildSummary(perPerson, totals) {
-      const lines = [
-        `Subtotal: ${formatMoney(totals.subtotal, totals.currency)}`,
-        `Tax (${round2(totals.taxPercent)}%): ${formatMoney(totals.taxAmount, totals.currency)}`,
-        `Tip (${round2(totals.tipPercent)}%): ${formatMoney(totals.tipAmount, totals.currency)}`,
-        `Grand total: ${formatMoney(totals.grandTotal, totals.currency)}`,
-        ''
-      ];
-
-      for (const person of perPerson) {
-        lines.push(`${person.name}: ${formatMoney(person.total, totals.currency)}`);
-        lines.push(`- Items: ${formatMoney(person.itemSubtotal, totals.currency)}`);
-        if (totals.taxAmount > 0) {
-          lines.push(`- Tax share: ${formatMoney(person.taxShare, totals.currency)}`);
-        }
-        if (totals.tipAmount > 0) {
-          lines.push(`- Tip share: ${formatMoney(person.tipShare, totals.currency)}`);
-        }
-
-        const itemParts = person.items.map((item) => {
-          if (item.sharedWith && item.sharedWith.length > 1) {
-            return `${item.name} (${formatMoney(item.share, totals.currency)}, shared with ${item.sharedWith.join(', ')})`;
-          }
-          return `${item.name} (${formatMoney(item.share, totals.currency)})`;
-        });
-
-        lines.push(`- Item details: ${itemParts.join('; ')}`);
-        lines.push('');
-      }
-
-      return lines.join('\n').trim();
-    }
-
-    function round2(value) {
-      return Math.round((value + Number.EPSILON) * 100) / 100;
-    }
-
-    function formatMoney(value, currency) {
-      if (currency === 'IDR') {
-        return `Rp${new Intl.NumberFormat('id-ID', {
-          minimumFractionDigits: 0,
-          maximumFractionDigits: 2
-        }).format(round2(value))}`;
-      }
-
-      return new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency
-      }).format(round2(value));
-    }
-  </script>
-</body>
+      window.run_js = window.ai_edge_gallery_get_result;
+    </script>
+  </body>
 </html>
