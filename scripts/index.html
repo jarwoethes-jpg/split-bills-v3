@@ -10,7 +10,7 @@
     <script>
       window.ai_edge_gallery_get_result = async (data) => {
         try {
-          const output = window.SplitBillsV3.run(data);
+          const output = await window.SplitBillsV3.run(data);
           return JSON.stringify(output);
         } catch (e) {
           console.error(e);
@@ -19,7 +19,6 @@
           });
         }
       };
-
       window.run_js = window.ai_edge_gallery_get_result;
     </script>
   </body>
